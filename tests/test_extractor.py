@@ -264,3 +264,83 @@ class TestMultiSheetSafety:
         records = self._extract(extractor, tmp_path, 5, False, monkeypatch)
         assert len(records) == 1
         assert not any("incomplete" in f for f in records[0].qc_flags)
+
+
+class TestRevisionSeries:
+    """A revision table is a sequence, which makes a misread detectable."""
+
+    from mdr.extractor import _is_revision_series as _series
+    series = staticmethod(_series)
+
+    @pytest.mark.parametrize("values,valid", [
+        (["0", "1", "2", "3"], True),
+        (["A", "B", "C"], True),
+        (["0", "1", "A", "B"], True),      # renumbered to a letter scheme
+        (["0"], True),
+        ([], True),
+        (["0", "1", "2", "S"], False),     # 'S' is a misread '3'
+        (["0", "1", "2", "5", "4"], False),  # goes backwards
+        (["B", "A"], False),
+        (["1", "1"], False),               # repeats
+        (["0", "1", "2", "B"], False),     # a letter run must start at 'A'
+        (["A", "B", "1"], False),
+    ])
+    def test_sequence_validation(self, values, valid):
+        assert self.series(values) == valid
+
+
+class TestRevisionReconciliationAgainstRealFailures:
+    """Cases taken from the sample corpus, where the first rule got it wrong."""
+
+    def test_a_broken_history_does_not_overrule_a_good_triangle(self, extractor):
+        # PID2206405001004_R3: the triangle read '3' correctly, but the
+        # history's last row misread '3' as 'S'. Preferring the history
+        # replaced a correct value with a wrong one.
+        record = _record("PID2206405001004_R3.pdf", revision="3",
+                         revision_history=[
+                             RevisionEntry("0", "2023-02-28", "AS-BUILT PER FIELD TRIP"),
+                             RevisionEntry("1", "2025-01-28", "ISSUED FOR AS-BUILT"),
+                             RevisionEntry("2", "2025-12-19", "ISSUED FOR CONSTRUCTION"),
+                             RevisionEntry("S", "2026-03-13", "ISSUED FOR CONSTRUCTION"),
+                         ])
+        _finalise(extractor, record)
+        assert record.revision == "3"
+        assert any("not consistent" in f for f in record.qc_flags)
+
+    def test_a_sound_history_still_overrules_the_triangle(self, extractor):
+        # ACGS-EL-6001-06_R3: the triangle is garbage, the table is clean.
+        record = _record("ACGS-EL-6001-06_R3.pdf", revision="J",
+                         revision_history=[
+                             RevisionEntry("0", "2022-01-04", "ISSUED FOR CONSTRUCTION"),
+                             RevisionEntry("1", "2022-05-20", "AS-BUILT"),
+                             RevisionEntry("2", "2025-08-01", "IFI"),
+                             RevisionEntry("3", "2026-01-07", "IFC"),
+                         ])
+        _finalise(extractor, record)
+        assert record.revision == "3"
+        assert any("history used" in f for f in record.qc_flags)
+
+    def test_a_broken_history_is_flagged_when_it_is_the_only_source(self, extractor):
+        record = _record("X_R4.pdf", revision="", revision_history=[
+            RevisionEntry("0", "2023-02-28", "AS-BUILT"),
+            RevisionEntry("5", "2026-03-13", "ISSUED FOR CONSTRUCTION"),
+            RevisionEntry("4", "2026-06-05", "ISSUED FOR CONSTRUCTION"),
+        ])
+        _finalise(extractor, record)
+        assert record.revision == "4"
+        assert any("not consistent" in f for f in record.qc_flags)
+
+    def test_a_broken_history_is_flagged_even_when_the_triangle_agrees(
+            self, extractor):
+        # PID2206405001007: triangle '4' is right and the newest row is '4',
+        # but the row below misread '3' as '5'. The revision is safe; the
+        # Revision History sheet is not, so say so.
+        record = _record("X_R4.pdf", revision="4", revision_history=[
+            RevisionEntry("0", "2023-02-28", "AS-BUILT"),
+            RevisionEntry("5", "2026-03-13", "ISSUED FOR CONSTRUCTION"),
+            RevisionEntry("4", "2026-06-05", "ISSUED FOR CONSTRUCTION"),
+        ])
+        _finalise(extractor, record)
+        assert record.revision == "4"
+        assert any("corroborated by the revision triangle" in f
+                   for f in record.qc_flags)

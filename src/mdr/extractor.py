@@ -49,6 +49,39 @@ def discover(root: str, settings: Settings) -> list[Path]:
     return out
 
 
+def _is_revision_series(revisions: list[str]) -> bool:
+    """Is this a plausible revision sequence, in issue order?
+
+    Revision tables run either 0,1,2,3... or A,B,C..., ascending. A sequence
+    that is mixed, repeats, or goes backwards means at least one character
+    was misread, which is exactly what makes an OCR error in the revision
+    column detectable rather than silently authoritative.
+    """
+    values = [r.strip().upper() for r in revisions if r and r.strip()]
+    if len(values) < 2:
+        return True
+
+    if all(v.isdigit() for v in values):
+        numbers = [int(v) for v in values]
+        return all(b > a for a, b in zip(numbers, numbers[1:]))
+
+    if all(len(v) == 1 and v.isalpha() for v in values):
+        return all(b > a for a, b in zip(values, values[1:]))
+
+    # A mixed series is only plausible where a numeric run is followed by a
+    # letter run that starts at 'A' - a drawing re-issued under a new
+    # revision scheme. A numeric run ending in some other letter is a
+    # misread, which is precisely the case this exists to catch.
+    letters_start = next((i for i, v in enumerate(values) if v.isalpha()), None)
+    if letters_start is None:
+        return False
+    head, tail = values[:letters_start], values[letters_start:]
+    return (bool(head) and all(v.isdigit() for v in head)
+            and all(len(v) == 1 and v.isalpha() for v in tail)
+            and tail[0] == "A"
+            and _is_revision_series(head) and _is_revision_series(tail))
+
+
 def _companion_dwg(pdf_path: Path) -> Path | None:
     """Return a .dwg sitting beside the PDF with the same stem."""
     for suffix in (".dwg", ".DWG"):
@@ -205,27 +238,62 @@ class Extractor:
     def _reconcile_revision(record: DocumentRecord) -> None:
         """Cross-check the revision triangle against the revision history.
 
-        The revision is printed inside a triangle, whose strokes routinely
-        contaminate the OCR. The newest row of the revision history carries
-        the same value in plain ruled text and is markedly more reliable,
-        so it wins whenever the two disagree.
+        The revision is printed inside a triangle whose strokes contaminate
+        OCR, so the plain ruled revision table is usually the better source.
+        Usually, but not always - the table's revision column is a single
+        character too, and when it misreads, blindly preferring it replaces a
+        correct value with a wrong one.
+
+        A revision table is a *sequence*: all numeric or all alphabetic, and
+        ascending with date. That makes a misread detectable. Where the
+        sequence holds, the table wins; where it is broken, the table has
+        demonstrably misread something and the triangle is used instead.
+        Either way the disagreement is flagged.
         """
         if not record.revision_history:
             return
-        dated = [e for e in record.revision_history if e.date and e.revision]
-        newest = (max(dated, key=lambda e: e.date) if dated
-                  else next((e for e in reversed(record.revision_history) if e.revision), None))
-        if not newest or not newest.revision:
+        ordered = [e for e in record.revision_history if e.revision]
+        if not ordered:
             return
+        dated = [e for e in ordered if e.date]
+        if dated:
+            ordered = sorted(dated, key=lambda e: e.date)
+        newest = ordered[-1].revision
+        series = [e.revision for e in ordered]
+        consistent = _is_revision_series(series)
 
         if not record.revision:
-            record.revision = newest.revision
-        elif record.revision.upper() != newest.revision.upper():
+            record.revision = newest
+            if not consistent:
+                record.add_flag(
+                    f"Revision taken from the revision history, but its sequence "
+                    f"is not consistent ({' -> '.join(series)}) - verify the sheet"
+                )
+            return
+
+        if record.revision.upper() == newest.upper():
+            if not consistent:
+                # The revision itself is corroborated, but the table around it
+                # was misread, so the Revision History sheet is unreliable.
+                record.add_flag(
+                    f"Revision history sequence is not consistent "
+                    f"({' -> '.join(series)}) - the revision itself is "
+                    "corroborated by the revision triangle"
+                )
+            return
+
+        if consistent:
             record.add_flag(
                 f"Revision triangle read '{record.revision}' but the revision history "
-                f"ends at '{newest.revision}' - history used"
+                f"ends at '{newest}' - history used"
             )
-            record.revision = newest.revision
+            record.revision = newest
+        else:
+            record.add_flag(
+                f"Revision history sequence is not consistent "
+                f"({' -> '.join(series)}) - the triangle value "
+                f"'{record.revision}' was used instead"
+            )
 
     @staticmethod
     def _latest_revision(record: DocumentRecord) -> RevisionEntry | None:
