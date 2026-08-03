@@ -44,7 +44,7 @@ TITLEBLOCK_REGION = (0.24, 0.82, 1.00, 1.00)
 
 # Word-level OCR passes. psm 4 reads the ruled label grid, psm 11 catches
 # isolated large text, psm 6 fills gaps.
-ANCHOR_PSMS = (4, 11)
+ANCHOR_PSMS = (4, 11, 6)
 
 
 @dataclass
@@ -377,10 +377,16 @@ class TitleBlockReader:
         Anchored on the metadata header row rather than on font size, so a
         stamp elsewhere on the sheet cannot be mistaken for the title.
         """
+        # Only labels on the top row of the metadata grid locate the title
+        # cell. PROJECT APPROVAL sits on the lowest row, so including it
+        # collapses the band to nothing when it is the only label found.
         metadata = [a for k, a in anchors.items()
                     if a and k in ("drawn_by", "design_engineer", "project_number",
-                                   "scale", "date", "drawing_check", "design_check")]
+                                   "scale", "date")]
         if not metadata:
+            # Without the top row there is nothing reliable to anchor on.
+            # Returning None leaves the title blank and flagged, which is far
+            # better than guessing a band and reporting the revision table.
             return None
         header_y = min(a[1] for a in metadata)
         leftmost_x = min(a[0] for a in metadata)
@@ -406,7 +412,37 @@ class TitleBlockReader:
         left = max(candidates) if candidates else 0
         return left, top, bottom
 
-    def _read_title(self, image, grid, anchors, region=None) -> tuple[list[str], str]:
+    @staticmethod
+    def _title_from_words(words: list[dict], band: tuple[int, int, int]) -> list[str]:
+        """Recover title lines from the word pass already performed.
+
+        Fallback for when the block read of the title cell comes back empty -
+        the words are usually present in the strip-level OCR even when a
+        second pass over the cropped cell finds nothing.
+        """
+        left, top, bottom = band
+        inside = [w for w in words
+                  if w["x0"] >= left and top <= w["y0"] <= bottom and w["conf"] >= 55]
+        if not inside:
+            return []
+        lines: list[list[dict]] = []
+        for word in sorted(inside, key=lambda w: (w["y0"], w["x0"])):
+            for line in lines:
+                if abs(line[0]["y0"] - word["y0"]) <= max(10, word["h"] * 0.7):
+                    line.append(word)
+                    break
+            else:
+                lines.append([word])
+        out = []
+        for line in lines:
+            line.sort(key=lambda w: w["x0"])
+            text = re.sub(r"\s+", " ", " ".join(w["text"] for w in line)).strip(" |_-")
+            if len(text) >= 4:
+                out.append(text)
+        return out
+
+    def _read_title(self, image, grid, anchors, region=None,
+                    words: list[dict] | None = None) -> tuple[list[str], str]:
         band = self._title_band(grid, anchors)
         if band is None:
             return [], ""
@@ -417,6 +453,8 @@ class TitleBlockReader:
             return [], ""
 
         raw = self.ocr.text(crop, psm=6)
+        if not raw.strip() and words:
+            raw = "\n".join(self._title_from_words(words, band))
         # Sheet border grid letters and rule fragments land in the crop as
         # isolated bracket-like characters; drop them before assembling.
         lines = [re.sub(r"(?<=\s)[\[\]|{}<>](?=[A-Za-z])|[\[\]|{}<>]", "", l)
@@ -428,6 +466,9 @@ class TitleBlockReader:
             r"^(DRAWING|REVISION|PROJECT|SCALE|DATE|NOTICE|ENBRIDGE|DRAWN|DESIGN|"
             r"REFERENCE|ENGINEERING\s+COMPANY|THIS\s+DRAWING)\b", re.I)
         lines = [l for l in lines if not noise.match(l)]
+        if not lines and words:
+            lines = [l for l in self._title_from_words(words, band)
+                     if not noise.match(l)]
         if not lines:
             return [], ""
 
@@ -581,7 +622,7 @@ class TitleBlockReader:
                 value, conf = self._read_simple(image, grid, anchors[key], region=region)
                 out[key], out["confidences"][key] = value, conf
 
-        title_lines, facility = self._read_title(image, grid, anchors, region)
+        title_lines, facility = self._read_title(image, grid, anchors, region, words)
         out["title_lines"] = title_lines
         out["facility"] = facility
 
