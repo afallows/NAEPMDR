@@ -141,6 +141,10 @@ being silently resolved:
 | `Status could not be determined ...` | The revision description matched no known code. |
 | `Drawing number/Title not readable` | Title block could not be read; check the sheet. |
 | `Low OCR confidence (n%)` | The multi-scale vote did not converge. |
+| `Drawing date not parseable ...` | The date cell was read but is not a valid date. The raw text is kept. |
+| `Companion DWG not used - the PDF has n sheets ...` | A DWG describes one drawing, so it is not applied across a multi-sheet set. |
+| `Only the first n of m sheets were read ...` | The `max_pages_per_file` cap was hit. The register is incomplete for that file. |
+| `Hyperlink may not open - '#' in the file path ...` | Excel treats `#` as a fragment separator; rename the file or folder. |
 
 Confidence is the share of independent readings that agreed, which is a
 better signal on a short boxed cell than Tesseract's own per-character
@@ -223,7 +227,7 @@ src/mdr/
   register.py     Excel writer
   gui.py          Desktop UI
   cli.py          Command line
-tests/            Unit tests for the pure parsing layer
+tests/            Parsing, extraction rules, DWG mapping, register, GUI, scanner
 build/            PyInstaller spec and PowerShell build script
 ```
 
@@ -232,3 +236,9 @@ build/            PyInstaller spec and PowerShell build script
 ```powershell
 .\.venv\Scripts\python -m pytest tests -q
 ```
+
+The suite covers the parsing layer, the conflict-resolution and QC rules, the
+DWG attribute mapping, the Excel writer's structure and hyperlinks, file
+discovery and scan control, and a headless build of the desktop window. It
+needs neither Tesseract nor AutoCAD; the GUI tests skip automatically where
+no display is available.
