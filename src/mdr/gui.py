@@ -216,7 +216,9 @@ class RegisterApp:
         frame = tk.Frame(parent, bg=T.white, highlightbackground=T.border,
                          highlightthickness=1)
         frame.grid(row=10, column=0, sticky="nsew")
-        self.log = tk.Text(frame, height=10, wrap="none", bd=0,
+        # Wrap rather than clip: the dependency and QC messages are long, and
+        # a truncated one is worse than useless.
+        self.log = tk.Text(frame, height=10, wrap="word", bd=0,
                            bg=T.white, fg=T.black, font=(T.mono, 9),
                            padx=8, pady=6, state="disabled")
         bar = ttk.Scrollbar(frame, command=self.log.yview)
