@@ -451,11 +451,10 @@ class TitleBlockReader:
         """
         x0, y0, x1, _y1 = anchor
         cx = (x0 + x1) // 2
-        _left, right = grid.column_bounds(cx, y0 - 5)
+        table_left, right = grid.column_bounds(cx, y0 - 5)
 
         # The table starts two columns left of the description (revision,
         # then date), so walk left twice from the description column.
-        table_left, _ = grid.column_bounds(cx, y0 - 5)
         for _ in range(2):
             nxt = max((s.pos for s in grid.verticals
                        if s.pos < table_left - 4 and s.spans(y0 - 5)), default=None)
