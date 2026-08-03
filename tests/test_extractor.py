@@ -207,3 +207,60 @@ class TestDwgComparison:
         extractor._compare_dwg(record, {"drawing_number": "Z", "revision": "C"})
         assert not any("DWG/PDF" in f for f in record.qc_flags)
         assert record.drawing_number == "Z"
+
+
+class TestMultiSheetSafety:
+    """A register that silently omits or mislabels sheets is worse than none."""
+
+    def _extract(self, extractor, tmp_path, pages: int, with_dwg: bool,
+                 monkeypatch):
+        import fitz
+
+        pdf = tmp_path / "SET-001_RA.pdf"
+        doc = fitz.open()
+        for _ in range(pages):
+            doc.new_page(width=2592, height=1728)
+        doc.save(str(pdf))
+        doc.close()
+        if with_dwg:
+            (tmp_path / "SET-001_RA.dwg").write_bytes(b"AC1032")
+            extractor.oda_path = "/fake/oda"
+            monkeypatch.setattr(
+                "mdr.extractor.read_dwg_titleblock",
+                lambda *_a, **_k: {"drawing_number": "FROM-DWG", "revision": "C"},
+            )
+        # Blank pages: OCR finds nothing, which is fine - the sheet-handling
+        # rules under test do not depend on what was read.
+        extractor.reader = type("R", (), {"read": lambda *a, **k: {}})()
+        return extractor.extract(pdf, tmp_path, tmp_path)
+
+    def test_one_row_per_sheet(self, extractor, tmp_path, monkeypatch):
+        records = self._extract(extractor, tmp_path, 3, False, monkeypatch)
+        assert [r.page for r in records] == [1, 2, 3]
+        assert all(r.page_count == 3 for r in records)
+
+    def test_a_single_dwg_is_not_applied_across_a_multi_sheet_set(
+            self, extractor, tmp_path, monkeypatch):
+        records = self._extract(extractor, tmp_path, 3, True, monkeypatch)
+        assert not any(r.drawing_number == "FROM-DWG" for r in records)
+        assert any("describes only one" in f for f in records[0].qc_flags)
+
+    def test_a_dwg_is_applied_to_a_single_sheet_pdf(
+            self, extractor, tmp_path, monkeypatch):
+        records = self._extract(extractor, tmp_path, 1, True, monkeypatch)
+        assert records[0].drawing_number == "FROM-DWG"
+        assert records[0].revision == "C"
+
+    def test_page_cap_is_reported_not_silent(self, extractor, tmp_path, monkeypatch):
+        extractor.settings.max_pages_per_file = 2
+        records = self._extract(extractor, tmp_path, 5, False, monkeypatch)
+        assert len(records) == 2
+        assert any("register is incomplete" in f for f in records[0].qc_flags)
+
+    def test_first_page_only_is_not_reported_as_truncation(
+            self, extractor, tmp_path, monkeypatch):
+        # Asking for page 1 only is a deliberate choice, not data loss.
+        extractor.settings.all_pages = False
+        records = self._extract(extractor, tmp_path, 5, False, monkeypatch)
+        assert len(records) == 1
+        assert not any("incomplete" in f for f in records[0].qc_flags)

@@ -188,9 +188,11 @@ optional.
 
 ## Performance
 
-Roughly 20 seconds per sheet per core. Work is spread across processes
-(`CPU count - 1` by default), so an 8-core workstation manages around 1,400
-sheets per hour.
+Measured at roughly 10 seconds per sheet on one core - 0.4 s to render the
+title block strip, 2.8 s to locate the anchor labels, and the remainder
+reading and voting on the individual cells. Work is spread across processes
+(`CPU count - 1` by default), so an 8-core workstation manages in the region
+of 2,500 sheets per hour.
 
 To go faster: `--first-page-only` on single-sheet drawing sets, or drop
 `--dpi` to 200. Both trade accuracy for speed.

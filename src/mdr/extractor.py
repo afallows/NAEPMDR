@@ -268,6 +268,7 @@ class Extractor:
         page_count = len(doc)
         limit = page_count if self.settings.all_pages else 1
         limit = min(limit, self.settings.max_pages_per_file)
+        truncated = self.settings.all_pages and limit < page_count
 
         for index in range(limit):
             record = DocumentRecord(
@@ -286,8 +287,24 @@ class Extractor:
 
             # DWG attributes are exact, so they take precedence. Applied
             # after OCR so mismatches can be detected first.
-            if dwg_data:
+            #
+            # Only for a single-sheet PDF: one DWG describes one drawing, so
+            # stamping its title block across every page of a multi-sheet set
+            # would give every row the same drawing number.
+            if dwg_data and page_count == 1:
                 self._compare_dwg(record, dwg_data)
+            elif dwg_data and index == 0:
+                record.add_flag(
+                    f"Companion DWG not used - the PDF has {page_count} sheets "
+                    "and the DWG describes only one"
+                )
+
+            if truncated and index == 0:
+                record.add_flag(
+                    f"Only the first {limit} of {page_count} sheets were read "
+                    f"(max_pages_per_file limit) - the register is incomplete "
+                    "for this file"
+                )
 
             self._finalise(record, root, register_dir)
             records.append(record)
