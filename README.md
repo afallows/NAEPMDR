@@ -212,10 +212,19 @@ installed - no pure-Python library reads DWG. The app finds it
 automatically and **falls back to OCR when it is absent**, so it is
 optional.
 
-> The DWG path is implemented but has not been run against a real DWG, as
-> the converter is Windows-only. The attribute tag mapping in
-> `src/mdr/dwg_source.py` (`ATTRIBUTE_MAP`) may need adjusting to match your
-> title block's ATTRIB tags on first use.
+> **Calibrate the tag mapping on first use.** DXF reading is unit tested,
+> but DWG-to-DXF conversion could not be exercised during development
+> because the converter is Windows-only, so the ATTRIB tag names in
+> `ATTRIBUTE_MAP` are informed guesses at what this title block template
+> uses. Run:
+>
+> ```
+> EnbridgeMDR-cli.exe --inspect-dwg "D:\...\ACGS-EL-6001-06_R3.dwg"
+> ```
+>
+> It prints every attribute tag and value in the drawing, which fields they
+> mapped to, and which tags went unmapped. Add anything missing to
+> `ATTRIBUTE_MAP` in `src/mdr/dwg_source.py`.
 
 ---
 
