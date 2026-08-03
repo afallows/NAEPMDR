@@ -126,6 +126,35 @@ schematics/isometrics and P&IDs) sharing the same title block template.
 
 ---
 
+## Measured accuracy
+
+Against the 31-sheet calibration set (28 EHT schematics and isometrics, 3
+P&IDs), scored by opening each drawing rather than by trusting its filename:
+
+| Field | Correct |
+| --- | --- |
+| Drawing number | 31 / 31 |
+| Revision | 31 / 31 |
+| Status | 31 / 31 |
+| Title | 30 / 31 |
+
+Two results are worth understanding rather than reading as a score:
+
+- `PID2206405001007_R5.pdf` is **Revision 4** on the sheet - both its
+  revision triangle and the newest row of its revision table read 4. The
+  file is misnamed. The register reports 4 and flags the disagreement, which
+  is the tool working, not failing.
+- Title text is read at word level and occasionally substitutes a character
+  in the CAD stroke font (`HTCP-94034` read as `HICP-94034`). Drawing
+  number, revision and status are read cell-by-cell with multi-scale voting
+  and are not subject to this.
+
+Accuracy on a different title block template will differ. The QC Review
+sheet is the control: it lists every row the tool is not confident about,
+and on this set it correctly flagged the one misnamed file.
+
+---
+
 ## Conflict handling and QC
 
 The title block is authoritative. The filename and the companion DWG are
