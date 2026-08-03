@@ -26,6 +26,14 @@ _WORKER_SETTINGS: Settings | None = None
 def _init_worker(settings: Settings) -> None:
     global _WORKER_SETTINGS
     _WORKER_SETTINGS = settings
+    # Tesseract parallelises internally with OpenMP and will happily use
+    # every core for a single call. Inside a worker pool that fights the
+    # pool: N workers each spawning multi-threaded Tesseract oversubscribes
+    # the machine and each call gets slower. One thread per worker lets the
+    # pool supply the parallelism, which is the faster arrangement by a wide
+    # margin on a full scan.
+    os.environ["OMP_THREAD_LIMIT"] = "1"
+    os.environ["OMP_NUM_THREADS"] = "1"
 
 
 def _extract_one(args: tuple[str, str, str]) -> list[DocumentRecord]:
