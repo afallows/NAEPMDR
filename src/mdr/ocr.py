@@ -29,16 +29,22 @@ ALNUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 WHITELIST_DRAWING_NO = ALNUM + "-./"
 WHITELIST_REVISION = ALNUM
 WHITELIST_DATE = "0123456789-/."
-# Quotes and whitespace are deliberately excluded: pytesseract passes the
-# config string through shlex, so an unbalanced quote raises rather than
-# being sent to Tesseract.
-WHITELIST_TEXT = ALNUM + "abcdefghijklmnopqrstuvwxyz-./&,()#+:"
+
+# There is deliberately no whitelist for free text. pytesseract shell-splits
+# the config string, so a whitelist containing a space cannot be expressed
+# safely - and a whitelist without a space makes Tesseract run the words of a
+# title together. Free-text cells are read with no whitelist at all.
 
 _CONFIG_HOSTILE = set("'\" \t\n\\")
 
 
 def sanitise_whitelist(whitelist: str) -> str:
-    """Strip characters that would break shlex parsing of the config string."""
+    """Strip characters that would break shlex parsing of the config string.
+
+    A quote in the whitelist raises "No closing quotation" from shlex before
+    Tesseract is ever reached, so this is a hard safety net rather than a
+    nicety.
+    """
     return "".join(c for c in whitelist if c not in _CONFIG_HOSTILE)
 
 

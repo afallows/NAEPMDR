@@ -133,6 +133,115 @@ def _collect_attributes(doc) -> dict[str, str]:
     return attrs
 
 
+def inspect_dwg(dwg_path: str, oda_path: str | None) -> dict:
+    """Return every block-attribute tag/value pair found in a DWG.
+
+    Diagnostic aid: the ATTRIBUTE_MAP above has to match the ATTRIB tags a
+    particular title block template actually uses, and those vary between
+    drawing offices. Running this against one real drawing shows exactly
+    what to map, instead of guessing.
+    """
+    if ezdxf is None:
+        return {"error": "ezdxf is not installed."}
+    if not oda_path:
+        return {"error": "ODA File Converter not found - cannot read DWG."}
+    dxf_path = dwg_to_dxf(dwg_path, oda_path)
+    if not dxf_path:
+        return {"error": "Conversion to DXF failed."}
+    try:
+        doc = ezdxf.readfile(dxf_path)
+    except Exception as exc:
+        return {"error": f"Could not read the converted DXF: {exc}"}
+    finally:
+        shutil.rmtree(Path(dxf_path).parent.parent, ignore_errors=True)
+
+    raw: dict[str, str] = {}
+    blocks: list[str] = []
+    for layout in list(doc.layouts) + [doc.modelspace()]:
+        for entity in layout:
+            if entity.dxftype() != "INSERT":
+                continue
+            try:
+                attribs = list(entity.attribs)
+            except AttributeError:
+                continue
+            if not attribs:
+                continue
+            name = getattr(entity.dxf, "name", "?")
+            if name not in blocks:
+                blocks.append(name)
+            for att in attribs:
+                tag = (att.dxf.tag or "").strip()
+                value = (att.dxf.text or "").strip()
+                if tag:
+                    raw.setdefault(f"{name}.{tag}", value)
+
+    mapped = {}
+    normalised = {_norm_tag(k.split(".")[-1]): v for k, v in raw.items()}
+    for field_name, tags in ATTRIBUTE_MAP.items():
+        for tag in tags:
+            if _norm_tag(tag) in normalised:
+                mapped[field_name] = normalised[_norm_tag(tag)]
+                break
+    return {"blocks": blocks, "attributes": raw, "mapped": mapped,
+            "unmapped": sorted(set(raw) - {
+                k for k in raw
+                if _norm_tag(k.split(".")[-1]) in {
+                    _norm_tag(t) for tags in ATTRIBUTE_MAP.values() for t in tags
+                } | {_norm_tag(t) for t in TITLE_TAGS + REVISION_DESC_TAGS}
+            })}
+
+
+def fields_from_attributes(attrs: dict[str, str]) -> dict:
+    """Map raw ATTRIB tag/value pairs onto register fields.
+
+    Split out from the DWG path so it can be tested without AutoCAD or the
+    ODA converter - the tag matching is where template differences bite.
+    """
+    if not attrs:
+        return {}
+    # Strip before testing: an attribute holding only spaces is empty, and
+    # letting it through would overwrite a good OCR read with whitespace.
+    normalised = {}
+    for key, value in attrs.items():
+        cleaned = (value or "").strip()
+        if cleaned:
+            normalised[_norm_tag(key)] = cleaned
+
+    out: dict = {"confidences": {}}
+    for field_name, tags in ATTRIBUTE_MAP.items():
+        for tag in tags:
+            key = _norm_tag(tag)
+            if key in normalised:
+                out[field_name] = normalised[key]
+                out["confidences"][field_name] = 100.0
+                break
+
+    titles = [normalised[_norm_tag(t)] for t in TITLE_TAGS if _norm_tag(t) in normalised]
+    seen: set[str] = set()
+    out["title_lines"] = [t for t in titles if not (t in seen or seen.add(t))]
+
+    for tag in REVISION_DESC_TAGS:
+        key = _norm_tag(tag)
+        if key in normalised:
+            out["revision_history"] = [(out.get("revision", ""),
+                                        out.get("drawing_date", ""),
+                                        normalised[key])]
+            break
+    return out
+
+
+def read_dxf_titleblock(dxf_path: str) -> dict:
+    """Extract title block fields from a converted DXF."""
+    if ezdxf is None:
+        return {}
+    try:
+        doc = ezdxf.readfile(dxf_path)
+    except Exception:
+        return {}
+    return fields_from_attributes(_collect_attributes(doc))
+
+
 def read_dwg_titleblock(dwg_path: str, oda_path: str | None) -> dict:
     """Return title block fields from a DWG, or {} if unreadable.
 
@@ -145,36 +254,6 @@ def read_dwg_titleblock(dwg_path: str, oda_path: str | None) -> dict:
     if not dxf_path:
         return {}
     try:
-        doc = ezdxf.readfile(dxf_path)
-    except Exception:
-        return {}
+        return read_dxf_titleblock(dxf_path)
     finally:
-        parent = Path(dxf_path).parent.parent
-        shutil.rmtree(parent, ignore_errors=True)
-
-    attrs = _collect_attributes(doc)
-    if not attrs:
-        return {}
-
-    out: dict = {"confidences": {}}
-    for field_name, tags in ATTRIBUTE_MAP.items():
-        for tag in tags:
-            key = _norm_tag(tag)
-            if key in attrs:
-                out[field_name] = attrs[key]
-                out["confidences"][field_name] = 100.0
-                break
-
-    titles = [attrs[_norm_tag(t)] for t in TITLE_TAGS if _norm_tag(t) in attrs]
-    # Preserve title line order without duplicates.
-    seen: set[str] = set()
-    out["title_lines"] = [t for t in titles if not (t in seen or seen.add(t))]
-
-    for tag in REVISION_DESC_TAGS:
-        key = _norm_tag(tag)
-        if key in attrs:
-            out["revision_history"] = [(out.get("revision", ""),
-                                        out.get("drawing_date", ""),
-                                        attrs[key])]
-            break
-    return out
+        shutil.rmtree(Path(dxf_path).parent.parent, ignore_errors=True)

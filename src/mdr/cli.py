@@ -41,6 +41,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tesseract", help="Path to tesseract.exe")
     parser.add_argument("--oda", help="Path to ODAFileConverter.exe")
     parser.add_argument("--gui", action="store_true", help="Launch the desktop UI")
+    parser.add_argument("--inspect-dwg", metavar="FILE",
+                        help="Print every title block attribute tag found in a "
+                             "DWG, to calibrate the tag mapping for your template")
     parser.add_argument("-q", "--quiet", action="store_true")
     return parser
 
@@ -67,8 +70,40 @@ def settings_from_args(args) -> Settings:
     return settings
 
 
+def _inspect_dwg(path: str, oda_path: str | None) -> int:
+    """Print a DWG's block attributes so the tag mapping can be calibrated."""
+    from .dwg_source import inspect_dwg, locate_oda
+
+    result = inspect_dwg(path, locate_oda(oda_path))
+    if "error" in result:
+        print(f"error: {result['error']}", file=sys.stderr)
+        return 4
+
+    print(f"Blocks with attributes: {', '.join(result['blocks']) or '(none)'}\n")
+    print("All attributes found (BLOCK.TAG = value):")
+    for tag, value in sorted(result["attributes"].items()):
+        print(f"  {tag:44} = {value}")
+
+    print("\nMapped onto register fields:")
+    if result["mapped"]:
+        for field, value in result["mapped"].items():
+            print(f"  {field:20} = {value}")
+    else:
+        print("  (nothing matched - the tag mapping needs adjusting)")
+
+    if result["unmapped"]:
+        print("\nUnmapped tags - add any that matter to ATTRIBUTE_MAP "
+              "in src/mdr/dwg_source.py:")
+        for tag in result["unmapped"]:
+            print(f"  {tag}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.inspect_dwg:
+        return _inspect_dwg(args.inspect_dwg, args.oda)
 
     if args.gui or not args.root:
         from .gui import launch
