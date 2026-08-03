@@ -223,7 +223,10 @@ class RegisterWriter:
             return
         # Excel wants forward slashes and a page anchor for multi-sheet PDFs.
         location = target.replace("\\", "/")
-        if record.page_count > 1 and record.page > 1:
+        # '#' separates the fragment, so a path containing one cannot carry a
+        # page anchor - the link would resolve to a truncated filename. The
+        # sheet still opens; it just lands on page 1. Extractor flags the row.
+        if record.page_count > 1 and record.page > 1 and "#" not in location:
             location = f"{location}#page={record.page}"
         cell.hyperlink = location
         cell.value = "Open"

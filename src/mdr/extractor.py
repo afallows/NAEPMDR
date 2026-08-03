@@ -193,6 +193,14 @@ class Extractor:
                 record.link_target = str(path)
                 record.add_flag("Absolute link used (file is on a different drive)")
 
+        if "#" in record.link_target:
+            # Excel treats '#' as the fragment separator, so the link resolves
+            # to a truncated path and simply fails to open.
+            record.add_flag(
+                "Hyperlink may not open - '#' in the file path is not "
+                "supported by Excel hyperlinks; rename the file or folder"
+            )
+
     @staticmethod
     def _reconcile_revision(record: DocumentRecord) -> None:
         """Cross-check the revision triangle against the revision history.
